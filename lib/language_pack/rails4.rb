@@ -3,7 +3,7 @@ require "language_pack/rails3"
 
 # Rails 4 Language Pack. This is for all Rails 4.x apps.
 class LanguagePack::Rails4 < LanguagePack::Rails3
-  ASSETS_CACHE_LIMIT = 52428800 # bytes
+  ASSETS_CACHE_LIMIT = 200000000 # 200 megabytes in bytes
 
   # detects if this is a Rails 4.x app
   # @return [Boolean] true if it's a Rails 4.x app
@@ -83,11 +83,12 @@ WARNING
         clean_task = rake.task("assets:clean")
         if clean_task.task_defined?
           puts "Cleaning assets"
-          clean_task.invoke(env: rake_env)
+          rake.task("assets:clean[0]").invoke(env: rake_env) # 0 = Keep zero previously compiled/fingerprinted files
 
           cleanup_assets_cache
           @cache.store public_assets_folder
           @cache.store default_assets_cache
+          FileUtils.rm_rf(default_assets_cache)
         end
       else
         precompile_fail(precompile.output)

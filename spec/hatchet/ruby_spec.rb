@@ -1,6 +1,40 @@
 require_relative '../spec_helper'
 
 describe "Ruby apps" do
+  describe "with mingw platform" do
+    it "is detected as a Windows app" do
+      Hatchet::Runner.new("default_ruby").tap do |app|
+        app.before_deploy do
+          Pathname("Gemfile").write(<<~'EOF')
+            source "https://rubygems.org"
+
+            gem "rake"
+          EOF
+
+          Pathname("Gemfile.lock").write(<<~'EOF')
+            GEM
+              remote: https://rubygems.org/
+              specs:
+                rake (13.2.1)
+
+            PLATFORMS
+              x86-mingw32
+              ruby
+
+            DEPENDENCIES
+              rake
+
+            BUNDLED WITH
+               2.5.9
+          EOF
+        end
+
+        app.deploy do
+          expect(app.output).to include("Windows platform detected, preserving `Gemfile.lock`")
+        end
+      end
+    end
+  end
 
   # https://github.com/heroku/heroku-buildpack-ruby/issues/1025
   describe "bin/rake binstub" do
@@ -294,13 +328,6 @@ describe "WEB_CONCURRENCY.sh" do
       expect(app.run("cat .profile.d/WEB_CONCURRENCY.sh").strip).to be_empty
       expect(app.run("echo $WEB_CONCURRENCY").strip).to be_empty
       expect(app.run("echo $WEB_CONCURRENCY", :heroku => {:env => "WEB_CONCURRENCY=0"}).strip).to eq("0")
-    end
-  end
-
-  it "has defaults set with SENSIBLE_DEFAULTS on" do
-    config = { "SENSIBLE_DEFAULTS" => "1"}
-    Hatchet::Runner.new('default_ruby', stack: DEFAULT_STACK, config: config).deploy do |app|
-      expect(app.run("env")).to match("WEB_CONCURRENCY=")
     end
   end
 end

@@ -1,7 +1,73 @@
 require 'spec_helper'
 
-describe "BundlerWrapper" do
+describe "Bundle platform conversion" do
+  it "converts `bundle platform --ruby` for prerelease versions" do
+    actual = LanguagePack::Helpers::BundlerWrapper.platform_to_version("ruby 3.3.0.preview2")
+    expect(actual).to eq("ruby-3.3.0.preview2")
+  end
 
+  it "converts `bundle platform --ruby` for released versions" do
+    actual = LanguagePack::Helpers::BundlerWrapper.platform_to_version("ruby 3.1.4")
+    expect(actual).to eq("ruby-3.1.4")
+  end
+end
+
+describe "Bundler version detection" do
+  it "supports minor versions" do
+    wrapper_klass = LanguagePack::Helpers::BundlerWrapper
+    version = wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   1.17.3")
+    expect(wrapper_klass::BLESSED_BUNDLER_VERSIONS.key?("1")).to be_truthy
+    expect(version).to eq(wrapper_klass::BLESSED_BUNDLER_VERSIONS["1"])
+
+    version = wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   2.2.7")
+    expect(wrapper_klass::BLESSED_BUNDLER_VERSIONS.key?("2.3")).to be_truthy
+    expect(version).to eq(wrapper_klass::BLESSED_BUNDLER_VERSIONS["2.3"])
+
+    version = wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   2.3.7")
+    expect(wrapper_klass::BLESSED_BUNDLER_VERSIONS.key?("2.3")).to be_truthy
+    expect(version).to eq(wrapper_klass::BLESSED_BUNDLER_VERSIONS["2.3"])
+
+    version = wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   2.4.7")
+    expect(wrapper_klass::BLESSED_BUNDLER_VERSIONS.key?("2.4")).to be_truthy
+    expect(version).to eq(wrapper_klass::BLESSED_BUNDLER_VERSIONS["2.4"])
+
+    version = wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   2.5.7")
+    expect(wrapper_klass::BLESSED_BUNDLER_VERSIONS.key?("2.5")).to be_truthy
+    expect(version).to eq(wrapper_klass::BLESSED_BUNDLER_VERSIONS["2.5"])
+
+    version = wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   2.6.7")
+    expect(wrapper_klass::BLESSED_BUNDLER_VERSIONS.key?("2.5")).to be_truthy
+    expect(version).to eq(wrapper_klass::BLESSED_BUNDLER_VERSIONS["2.5"])
+
+    expect {
+      wrapper_klass.detect_bundler_version(contents: "BUNDLED WITH\n   3.6.7")
+    }.to raise_error(wrapper_klass::UnsupportedBundlerVersion)
+  end
+end
+
+describe "Multiple platform detection" do
+  it "reports true on bundler 2.2+" do
+    Dir.mktmpdir do |dir|
+      gemfile = Pathname(dir).join("Gemfile")
+      lockfile = Pathname(dir).join("Gemfile.lock").tap {|p| p.write("BUNDLED WITH\n   2.5.7") }
+
+      bundler = LanguagePack::Helpers::BundlerWrapper.new(gemfile_path: gemfile)
+      expect(bundler.supports_multiple_platforms?).to be_truthy
+    end
+  end
+
+  it "reports false on bundler prior to 2.2" do
+    Dir.mktmpdir do |dir|
+      gemfile = Pathname(dir).join("Gemfile")
+      lockfile = Pathname(dir).join("Gemfile.lock").tap {|p| p.write("BUNDLED WITH\n   1.15.2") }
+
+      bundler = LanguagePack::Helpers::BundlerWrapper.new(gemfile_path: gemfile)
+      expect(bundler.supports_multiple_platforms?).to be_falsey
+    end
+  end
+end
+
+describe "BundlerWrapper mutates rubyopt" do
   before(:each) do
     if ENV['RUBYOPT']
       @original_rubyopt = ENV['RUBYOPT']

@@ -1,34 +1,15 @@
-api = "0.2"
-
 [buildpack]
-id = "heroku/ruby"
-version = "0.1.4"
 name = "Ruby"
-homepage = "https://github.com/heroku/heroku-buildpack-ruby"
-ruby_version = "3.1.4"
-
-[publish]
+ruby_version = "3.1.6"
 
 [publish.Ignore]
-files = ["spec/"]
-
-[[publish.Vendor]]
-url = "https://heroku-buildpack-ruby.s3.us-east-1.amazonaws.com/heroku-20/ruby-3.1.4.tgz"
-dir = "vendor/ruby/heroku-20"
-
-[[publish.Vendor]]
-url = "https://heroku-buildpack-ruby.s3.us-east-1.amazonaws.com/heroku-22/ruby-3.1.4.tgz"
-dir = "vendor/ruby/heroku-22"
-
-[[stacks]]
-id = "heroku-20"
-
-[[stacks]]
-id = "heroku-22"
-
-[metadata]
-
-[metadata.release]
-
-[metadata.release.docker]
-repository = "public.ecr.aws/heroku-buildpacks/heroku-ruby-buildpack"
+files = [
+  "changelogs/",
+  "spec/",
+  "Gemfile",
+  "Gemfile.lock",
+  "Rakefile",
+  "app.json",
+  "hatchet.json",
+  "hatchet.lock",
+]

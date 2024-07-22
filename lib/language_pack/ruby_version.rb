@@ -12,8 +12,8 @@ module LanguagePack
       end
     end
 
-    BOOTSTRAP_VERSION_NUMBER = "3.1.4".freeze
-    DEFAULT_VERSION_NUMBER = "3.1.4".freeze
+    BOOTSTRAP_VERSION_NUMBER = "3.1.6".freeze
+    DEFAULT_VERSION_NUMBER = "3.1.6".freeze
     DEFAULT_VERSION        = "ruby-#{DEFAULT_VERSION_NUMBER}".freeze
     LEGACY_VERSION_NUMBER  = "1.9.2".freeze
     LEGACY_VERSION         = "ruby-#{LEGACY_VERSION_NUMBER}".freeze
@@ -52,9 +52,7 @@ module LanguagePack
 
     # https://github.com/bundler/bundler/issues/4621
     def version_for_download
-      if rbx?
-        "rubinius-#{engine_version}"
-      elsif patchlevel_is_significant? && @patchlevel && @patchlevel.sub(/p/, '').to_i >= 0
+      if patchlevel_is_significant? && @patchlevel && @patchlevel.sub(/p/, '').to_i >= 0
         @version
       else
         version_without_patchlevel
@@ -62,9 +60,7 @@ module LanguagePack
     end
 
     def file_name
-      file = "#{version_for_download}.tgz"
-      file.sub!("ruby", "ruby-build") if build?
-      file
+      "#{version_for_download}.tgz"
     end
 
     # Before Ruby 2.1 patch releases were done via patchlevel i.e. 1.9.3-p426 versus 1.9.3-p448
@@ -85,18 +81,6 @@ module LanguagePack
     # @return [Boolean] true if we are and false if we aren't
     def jruby?
       engine == :jruby
-    end
-
-    # determine if we're using rbx
-    # @return [Boolean] true if we are and false if we aren't
-    def rbx?
-      engine == :rbx
-    end
-
-    # determines if a build ruby is required
-    # @return [Boolean] true if a build ruby is required
-    def build?
-      engine == :ruby && %w(1.8.7 1.9.2).include?(ruby_version)
     end
 
     # convert to a Gemfile ruby DSL incantation

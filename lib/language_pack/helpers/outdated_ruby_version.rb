@@ -7,7 +7,8 @@
 #   ruby_version = LanguagePack::RubyVersion.new("ruby-2.2.5")
 #   outdated = LanguagePack::Helpers::OutdatedRubyVersion.new(
 #     current_ruby_version: ruby_version,
-#     fetcher: LanguagePack::Fetcher.new(LanguagePack::Base::VENDOR_URL, "heroku-20")
+#     fetcher: LanguagePack::Fetcher.new(LanguagePack::Base::VENDOR_URL, stack: "heroku-22")
+#     fetcher: LanguagePack::Fetcher.new(LanguagePack::Base::VENDOR_URL, stack: "heroku-22", arch: "amd64")
 #   )
 #
 #   outdated.call
@@ -34,7 +35,6 @@ class LanguagePack::Helpers::OutdatedRubyVersion
 
   def can_check?
     return false if current_ruby_version.patchlevel_is_significant?
-    return false if current_ruby_version.rbx?
     return false if current_ruby_version.jruby?
 
     true

@@ -8,7 +8,6 @@ require "language_pack/ruby_version"
 require "language_pack/helpers/nodebin"
 require "language_pack/helpers/node_installer"
 require "language_pack/helpers/yarn_installer"
-require "language_pack/helpers/layer"
 require "language_pack/helpers/binstub_check"
 require "language_pack/version"
 
@@ -17,10 +16,7 @@ class LanguagePack::Ruby < LanguagePack::Base
   NAME                 = "ruby"
   LIBYAML_VERSION      = "0.1.7"
   LIBYAML_PATH         = "libyaml-#{LIBYAML_VERSION}"
-  RBX_BASE_URL         = "http://binaries.rubini.us/heroku"
   NODE_BP_PATH         = "vendor/node/bin"
-
-  Layer = LanguagePack::Helpers::Layer
 
   # detects if this is a valid Ruby app
   # @return [Boolean] true if it's a Ruby app
@@ -38,8 +34,6 @@ class LanguagePack::Ruby < LanguagePack::Base
 
   def initialize(*args)
     super(*args)
-    @fetchers[:mri]    = LanguagePack::Fetcher.new(VENDOR_URL, @stack)
-    @fetchers[:rbx]    = LanguagePack::Fetcher.new(RBX_BASE_URL, @stack)
     @node_installer    = LanguagePack::Helpers::NodeInstaller.new
     @yarn_installer    = LanguagePack::Helpers::YarnInstaller.new
   end
@@ -86,7 +80,7 @@ WARNING
     remove_vendor_bundle
     warn_bundler_upgrade
     warn_bad_binstubs
-    install_ruby(slug_vendor_ruby, build_ruby_path)
+    install_ruby(slug_vendor_ruby)
     setup_language_pack_environment(
       ruby_layer_path: File.expand_path("."),
       gem_layer_path: File.expand_path("."),
@@ -112,57 +106,6 @@ WARNING
   rescue => e
     warn_outdated_ruby
     raise e
-  end
-
-
-  def build
-    new_app?
-    remove_vendor_bundle
-    warn_bad_binstubs
-    ruby_layer = Layer.new(@layer_dir, "ruby", launch: true)
-    install_ruby("#{ruby_layer.path}/#{slug_vendor_ruby}")
-    ruby_layer.metadata[:version] = ruby_version.version
-    ruby_layer.metadata[:patchlevel] = ruby_version.patchlevel if ruby_version.patchlevel
-    ruby_layer.metadata[:engine] = ruby_version.engine.to_s
-    ruby_layer.metadata[:engine_version] = ruby_version.engine_version
-    ruby_layer.write
-
-    gem_layer = Layer.new(@layer_dir, "gems", launch: true, cache: true, build: true)
-    setup_language_pack_environment(
-      ruby_layer_path: ruby_layer.path,
-      gem_layer_path: gem_layer.path,
-      bundle_path: "#{gem_layer.path}/vendor/bundle",
-      bundle_default_without: "development:test"
-    )
-    allow_git do
-      # TODO install bundler in separate layer
-      topic "Loading Bundler Cache"
-      gem_layer.validate! do |metadata|
-        valid_bundler_cache?(gem_layer.path, gem_layer.metadata)
-      end
-      install_bundler_in_app("#{gem_layer.path}/#{slug_vendor_base}")
-      build_bundler
-      # TODO post_bundler might need to be done in a new layer
-      bundler.clean
-      gem_layer.metadata[:gems] = Digest::SHA2.hexdigest(File.read("Gemfile.lock"))
-      gem_layer.metadata[:stack] = @stack
-      gem_layer.metadata[:ruby_version] = run_stdout(%q(ruby -v)).strip
-      gem_layer.metadata[:rubygems_version] = run_stdout(%q(gem -v)).strip
-      gem_layer.metadata[:buildpack_version] = BUILDPACK_VERSION
-      gem_layer.write
-
-      create_database_yml
-      # TODO replace this with multibuildpack stuff? put binaries in their own layer?
-      install_binaries
-      run_assets_precompile_rake_task
-    end
-    setup_profiled(ruby_layer_path: ruby_layer.path, gem_layer_path: gem_layer.path)
-    setup_export(gem_layer)
-    config_detect
-    best_practice_warnings
-    cleanup
-
-    super
   end
 
   def cleanup
@@ -230,12 +173,6 @@ WARNING
     "vendor/#{ruby_version.version_without_patchlevel}"
   end
 
-  # the absolute path of the build ruby to use during the buildpack
-  # @return [String] resulting path
-  def build_ruby_path
-    "/tmp/#{ruby_version.version_without_patchlevel}"
-  end
-
   # fetch the ruby version from bundler
   # @return [String, nil] returns the ruby version if detected or nil if none is detected
   def ruby_version
@@ -252,6 +189,20 @@ WARNING
   end
 
   def set_default_web_concurrency
+    warn(<<~WARNING)
+      Your application is using an undocumented feature SENSIBLE_DEFAULTS
+
+      This feature is not supported and may be removed at any time. Please remove the SENSIBLE_DEFAULTS environment variable from your app.
+
+      $ heroku config:unset SENSIBLE_DEFAULTS
+
+      To configure your application's web concurrency, use the WEB_CONCURRENCY environment variable following this documentation:
+
+      - https://devcenter.heroku.com/articles/deploying-rails-applications-with-the-puma-web-server#recommended-default-puma-process-and-thread-configuration
+      - https://devcenter.heroku.com/articles/h12-request-timeout-in-ruby-mri#puma-pool-usage
+      - https://help.heroku.com/88G3XLA6/what-is-an-acceptable-amount-of-dyno-load
+    WARNING
+
     <<-EOF
 case $(ulimit -u) in
 256)
@@ -339,36 +290,28 @@ EOF
 
   # Sets up the environment variables for subsequent processes run by
   # muiltibuildpack. We can't use profile.d because $HOME isn't set up
-  def setup_export(layer = nil)
-    if layer
-      paths = ENV["PATH"]
-    else
-      paths = ENV["PATH"].split(":").map do |path|
-        /^\/.*/ !~ path ? "#{build_path}/#{path}" : path
-      end.join(":")
-    end
+  def setup_export
+    paths = ENV["PATH"].split(":").map do |path|
+      /^\/.*/ !~ path ? "#{build_path}/#{path}" : path
+    end.join(":")
 
     # TODO ensure path exported is correct
-    set_export_path "PATH", paths, layer
+    set_export_path "PATH", paths
 
-    if layer
-      gem_path = "#{layer.path}/#{slug_vendor_base}"
-    else
-      gem_path = "#{build_path}/#{slug_vendor_base}"
-    end
-    set_export_path "GEM_PATH", gem_path, layer
-    set_export_default "LANG", "en_US.UTF-8", layer
+    gem_path = "#{build_path}/#{slug_vendor_base}"
+    set_export_path "GEM_PATH", gem_path
+    set_export_default "LANG", "en_US.UTF-8"
 
     # TODO handle jruby
     if ruby_version.jruby?
       set_export_default "JRUBY_OPTS", default_jruby_opts
     end
 
-    set_export_default "BUNDLE_PATH", ENV["BUNDLE_PATH"], layer
-    set_export_default "BUNDLE_WITHOUT", ENV["BUNDLE_WITHOUT"], layer
-    set_export_default "BUNDLE_BIN", ENV["BUNDLE_BIN"], layer
-    set_export_default "BUNDLE_GLOBAL_PATH_APPENDS_RUBY_SCOPE", ENV["BUNDLE_GLOBAL_PATH_APPENDS_RUBY_SCOPE"], layer if bundler.needs_ruby_global_append_path?
-    set_export_default "BUNDLE_DEPLOYMENT", ENV["BUNDLE_DEPLOYMENT"], layer if ENV["BUNDLE_DEPLOYMENT"] # Unset on windows since we delete the Gemfile.lock
+    set_export_default "BUNDLE_PATH", ENV["BUNDLE_PATH"]
+    set_export_default "BUNDLE_WITHOUT", ENV["BUNDLE_WITHOUT"]
+    set_export_default "BUNDLE_BIN", ENV["BUNDLE_BIN"]
+    set_export_default "BUNDLE_GLOBAL_PATH_APPENDS_RUBY_SCOPE", ENV["BUNDLE_GLOBAL_PATH_APPENDS_RUBY_SCOPE"]
+    set_export_default "BUNDLE_DEPLOYMENT", ENV["BUNDLE_DEPLOYMENT"] # Unset on windows since we delete the Gemfile.lock
   end
 
   # sets up the profile.d script for this buildpack
@@ -504,23 +447,28 @@ EOF
 
   # install the vendored ruby
   # @return [Boolean] true if it installs the vendored ruby and false otherwise
-  def install_ruby(install_path, build_ruby_path = nil)
+  def install_ruby(install_path)
     # Could do a compare operation to avoid re-downloading ruby
     return false unless ruby_version
-    installer = LanguagePack::Installers::RubyInstaller.installer(ruby_version).new(@stack)
 
-    @ruby_download_check = LanguagePack::Helpers::DownloadPresence.new(ruby_version.file_name)
+    installer = LanguagePack::Installers::HerokuRubyInstaller.new(
+      multi_arch_stacks: MULTI_ARCH_STACKS,
+      stack: @stack,
+      arch: @arch
+    )
+
+    @ruby_download_check = LanguagePack::Helpers::DownloadPresence.new(
+      multi_arch_stacks: MULTI_ARCH_STACKS,
+      file_name: ruby_version.file_name,
+      arch: @arch
+    )
     @ruby_download_check.call
-
-    if ruby_version.build?
-      installer.fetch_unpack(ruby_version, build_ruby_path, true)
-    end
 
     installer.install(ruby_version, install_path)
 
     @outdated_version_check = LanguagePack::Helpers::OutdatedRubyVersion.new(
       current_ruby_version: ruby_version,
-      fetcher: installer.fetcher
+      fetcher: installer.fetcher,
     )
     @outdated_version_check.call
 
@@ -597,7 +545,6 @@ EOF
     error message
   end
 
-  # TODO make this compatible with CNB
   def new_app?
     @new_app ||= !File.exist?("vendor/heroku")
   end
@@ -606,9 +553,7 @@ EOF
   # @return [String] resulting path or empty string if ruby is not vendored
   def ruby_install_binstub_path(ruby_layer_path = ".")
     @ruby_install_binstub_path ||=
-      if ruby_version.build?
-        "#{build_ruby_path}/bin"
-      elsif ruby_version
+      if ruby_version
         "#{ruby_layer_path}/#{slug_vendor_ruby}/bin"
       else
         ""
@@ -677,20 +622,6 @@ EOF
   # @param [String] relative path of the binary on the slug
   def uninstall_binary(path)
     FileUtils.rm File.join('bin', File.basename(path)), :force => true
-  end
-
-  def load_default_cache?
-    new_app? && ruby_version.default?
-  end
-
-  # loads a default bundler cache for new apps to speed up initial bundle installs
-  def load_default_cache
-    if false # load_default_cache?
-      puts "New app detected loading default bundler cache"
-      patchlevel = run("ruby -e 'puts RUBY_PATCHLEVEL'").strip
-      cache_name  = "#{LanguagePack::RubyVersion::DEFAULT_VERSION}-p#{patchlevel}-default-cache"
-      @fetchers[:buildpack].fetch_untar("#{cache_name}.tgz")
-    end
   end
 
   # remove `vendor/bundle` that comes from the git repo
@@ -763,19 +694,35 @@ BUNDLE
       end
 
       if bundler.windows_gemfile_lock?
-        log("bundle", "has_windows_gemfile_lock")
+        if bundler.supports_multiple_platforms?
+          puts "Windows platform detected, preserving `Gemfile.lock` (#{bundler.version} >= 2.2)"
+        else
+            File.unlink("Gemfile.lock")
+            ENV.delete("BUNDLE_DEPLOYMENT")
 
-        File.unlink("Gemfile.lock")
-        ENV.delete("BUNDLE_DEPLOYMENT")
+            warn(<<~WARNING, inline: true)
+              Removing `Gemfile.lock` because it was generated on Windows.
 
-        warn(<<~WARNING, inline: true)
-          Removing `Gemfile.lock` because it was generated on Windows.
-          Bundler will do a full resolve so native gems are handled properly.
-          This may result in unexpected gem versions being used in your app.
-          In rare occasions Bundler may not be able to resolve your dependencies at all.
+              Bundler will do a full resolve so native gems are handled properly.
+              This may result in unexpected gem versions being used in your app.
+              In rare occasions Bundler may not be able to resolve your dependencies at all.
 
-          https://devcenter.heroku.com/articles/bundler-windows-gemfile
-        WARNING
+              Upgrade to bundler version 2.2 or higher to skip this behavior and use built in support
+              for multiple platforms. Running these commands below (after the `>`) in a command prompt
+              should resolve this warning:
+
+                > gem install bundler
+                > bundle update --bundler
+                > bundle lock --add-platform ruby
+                > bundle lock --add-platform x86_64-linux
+                > bundle install
+                > git add Gemfile.lock
+                > git commit -m "Upgrade bundler"
+
+              For more information see:
+                https://devcenter.heroku.com/articles/bundler-windows-gemfile
+            WARNING
+        end
       end
 
       bundle_command = String.new("")
@@ -823,12 +770,7 @@ BUNDLE
         puts "Bundle completed (#{"%.2f" % bundle_time}s)"
         log "bundle", :status => "success"
         puts "Cleaning up the bundler cache."
-        # Only show bundle clean output when not using default cache
-        if load_default_cache?
-          run("bundle clean > /dev/null", user_env: true, env: env_vars)
-        else
-          pipe("bundle clean", out: "2> /dev/null", user_env: true, env: env_vars)
-        end
+        pipe("bundle clean", out: "2> /dev/null", user_env: true, env: env_vars)
         @bundler_cache.store
 
         # Keep gem cache out of the slug
@@ -1018,6 +960,26 @@ params = CGI.parse(uri.query || "")
     if Pathname(build_path).join("package.json").exist? ||
          bundler.has_gem?('execjs') ||
          bundler.has_gem?('webpacker')
+
+      version = @node_installer.version
+      old_version = @metadata.fetch("default_node_version") { version }
+
+      if version != version
+        warn(<<~WARNING, inline: true)
+          Default version of Node.js changed (#{old_version} to #{version})
+        WARNING
+      end
+
+      warn(<<~WARNING, inline: true)
+        Installing a default version (#{version}) of Node.js.
+        This version is not pinned and can change over time, causing unexpected failures.
+
+        Heroku recommends placing the `heroku/nodejs` buildpack in front of
+        `heroku/ruby` to install a specific version of node:
+
+        https://devcenter.heroku.com/articles/ruby-support#node-js-support
+      WARNING
+
       [@node_installer.binary_path]
     else
       []
@@ -1028,6 +990,27 @@ params = CGI.parse(uri.query || "")
     return [] if yarn_preinstalled?
 
     if Pathname(build_path).join("yarn.lock").exist? || bundler.has_gem?('webpacker')
+
+      version = @yarn_installer.version
+      old_version = @metadata.fetch("default_yarn_version") { version }
+
+      if version != version
+        warn(<<~WARNING, inline: true)
+          Default version of Yarn changed (#{old_version} to #{version})
+        WARNING
+      end
+
+      warn(<<~WARNING, inline: true)
+        Installing a default version (#{version}) of Yarn
+        This version is not pinned and can change over time, causing unexpected failures.
+
+        Heroku recommends placing the `heroku/nodejs` buildpack in front of the `heroku/ruby`
+        buildpack as it offers more comprehensive Node.js support, including the ability to
+        customise the Node.js version:
+
+        https://devcenter.heroku.com/articles/ruby-support#node-js-support
+      WARNING
+
       [@yarn_installer.name]
     else
       []
